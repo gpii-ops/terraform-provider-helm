@@ -1,0 +1,78 @@
+version: 2
+jobs:
+  build:
+    docker:
+      - image: circleci/golang:1.11
+    working_directory: /go/src/github.com/terraform-providers/terraform-provider-helm
+    steps:
+      - checkout
+      - run:
+          name: Test
+          command: |
+            make test;
+            make vet
+      - run:
+          name: Build
+          command: |
+            make build
+  make-packages:
+    docker:
+      - image: circleci/golang:1.11
+    working_directory: /go/src/github.com/terraform-providers/terraform-provider-helm
+    steps:
+      - checkout
+      - run:
+          name: Build packages
+          command: |
+            set -x
+            # Set env variables for make
+            export VERSION=${CIRCLE_TAG}
+            [ -z "${VERSION}" ] && export VERSION="dev"
+            # Create packages
+            make packages
+      - persist_to_workspace:
+          root: build
+          paths:
+            - "*.tar.gz"
+
+  push-to-github:
+    docker:
+      - image: circleci/golang:1.11
+    steps:
+      - attach_workspace:
+          at: ./artifacts
+      - run:
+          name: "Publish Release on GitHub"
+          command: |
+            set -x
+            go get github.com/tcnksm/ghr;
+            # Rename artifacts (they always come as HEAD from tagged build)
+            mv ./artifacts/terraform-provider-helm_{HEAD,${CIRCLE_TAG}}_darwin_amd64.tar.gz
+            mv ./artifacts/terraform-provider-helm_{HEAD,${CIRCLE_TAG}}_linux_amd64.tar.gz
+            ghr -u ${CIRCLE_PROJECT_USERNAME} -r ${CIRCLE_PROJECT_REPONAME} -c ${CIRCLE_SHA1} -delete ${CIRCLE_TAG} ./artifacts/
+
+workflows:
+  version: 2
+  main:
+    jobs:
+      - build:
+          filters:
+            tags:
+              only: /^v\d+\.\d+\.\d+$/
+      - make-packages:
+          requires:
+            - build
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: /^v\d+\.\d+\.\d+$/
+      - push-to-github:
+          requires:
+            - build
+            - make-packages
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: /^v\d+\.\d+\.\d+$/
